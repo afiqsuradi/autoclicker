@@ -14,12 +14,14 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 mod clicker;
 mod hotkey;
+mod pick;
 mod state;
 mod ui;
 mod win;
 
 use clicker::{Config, Worker};
 use hotkey::{HOTKEY_ID, Hotkey, is_modifier_vk};
+use pick::{WM_APP_PICKED, on_picked, overlay_proc, start_pick};
 use state::{Mode, app};
 use ui::{
     CLIENT_H, CLIENT_W, ID_CHANGE, ID_FIXED_MS, ID_LOC, ID_MAX_MS, ID_MIN_MS, ID_MODE, ID_PICK,
@@ -29,8 +31,6 @@ use ui::{
 use win::{combo, item, set_text, wide};
 
 const TIMER_STATUS: usize = 1;
-const WM_APP_PICKED: u32 = WM_APP + 1; // wParam: 1 = picked, 0 = cancelled; lParam: packed point
-const OVERLAY_ALPHA: u8 = 60; // [D§6]
 
 // ---- Start / stop -------------------------------------------------------------------
 
@@ -159,68 +159,6 @@ fn on_capture_key(hwnd: HWND, vk: u32) {
     }
 }
 
-// ---- Pick (eyedropper) [D§6] ------------------------------------------------------------
-
-fn start_pick(hwnd: HWND) {
-    if app(|a| a.mode) != Mode::Idle {
-        return;
-    }
-    app(|a| a.mode = Mode::Picking);
-    apply_state(hwnd);
-    unsafe {
-        // Dimmed, topmost, crosshair window over every monitor; it eats the pick click.
-        let class = wide("AutoClickerPick");
-        let ov = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, class.as_ptr(), null(), WS_POPUP,
-            GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
-            GetSystemMetrics(SM_CXVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN),
-            hwnd, null_mut(), GetModuleHandleW(null()), null(),
-        );
-        if ov.is_null() {
-            app(|a| a.mode = Mode::Idle);
-            return apply_state(hwnd);
-        }
-        SetLayeredWindowAttributes(ov, 0, OVERLAY_ALPHA, LWA_ALPHA);
-        ShowWindow(ov, SW_SHOW);
-        SetForegroundWindow(ov);
-        SetFocus(ov);
-    }
-}
-
-fn pack_point(p: POINT) -> LPARAM {
-    ((p.y as u32 as u64) << 32 | p.x as u32 as u64) as LPARAM
-}
-
-fn unpack_point(lp: LPARAM) -> POINT {
-    POINT { x: lp as u64 as u32 as i32, y: (lp as u64 >> 32) as u32 as i32 }
-}
-
-extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    unsafe {
-        let finish = |picked: bool| {
-            // Hiding deactivates us and re-enters with WM_ACTIVATE; the visibility check makes that a no-op.
-            if IsWindowVisible(hwnd) == 0 {
-                return;
-            }
-            ShowWindow(hwnd, SW_HIDE);
-            let mut pt = POINT { x: 0, y: 0 };
-            GetCursorPos(&mut pt);
-            PostMessageW(GetWindow(hwnd, GW_OWNER), WM_APP_PICKED, picked as usize, pack_point(pt));
-            DestroyWindow(hwnd);
-        };
-        match msg {
-            // Act on button *up* so both down and up land here and the app below gets nothing.
-            WM_LBUTTONDOWN | WM_RBUTTONDOWN => 0,
-            WM_LBUTTONUP => { finish(true); 0 }
-            WM_RBUTTONUP => { finish(false); 0 }
-            WM_KEYDOWN if wp == VK_ESCAPE as usize => { finish(false); 0 }
-            WM_CLOSE => { finish(false); 0 } // Alt+F4 on the overlay
-            WM_ACTIVATE if (wp & 0xFFFF) as u32 == WA_INACTIVE => { finish(false); 0 }
-            _ => DefWindowProcW(hwnd, msg, wp, lp),
-        }
-    }
-}
-
 fn main() {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -236,7 +174,7 @@ fn main() {
         wc.lpszClassName = class.as_ptr();
         RegisterClassExW(&wc);
 
-        let pick_class = wide("AutoClickerPick");
+        let pick_class = wide(pick::CLASS);
         wc.lpfnWndProc = Some(overlay_proc);
         wc.hCursor = LoadCursorW(null_mut(), IDC_CROSS);
         wc.hbrBackground = GetStockObject(BLACK_BRUSH) as HBRUSH;
@@ -299,15 +237,7 @@ extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                 0
             }
             WM_APP_PICKED => {
-                if app(|a| a.mode) == Mode::Picking {
-                    if wp == 1 {
-                        app(|a| a.spot = Some(unpack_point(lp)));
-                        SendMessageW(item(hwnd, ID_LOC), CB_SETCURSEL, 1, 0);
-                    }
-                    app(|a| a.mode = Mode::Idle);
-                    apply_state(hwnd);
-                    SetFocus(item(hwnd, ID_PICK));
-                }
+                on_picked(hwnd, wp == 1, lp);
                 0
             }
             WM_HOTKEY => {
@@ -348,19 +278,6 @@ extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                 0
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn point_packing_round_trips_negative_coords() {
-        for (x, y) in [(0, 0), (1234, 567), (-1920, -40), (i32::MAX, i32::MIN)] {
-            let p = unpack_point(pack_point(POINT { x, y }));
-            assert_eq!((p.x, p.y), (x, y));
         }
     }
 }
