@@ -16,6 +16,10 @@ use windows_sys::Win32::UI::HiDpi::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
+mod win;
+
+use win::{combo, enable, item, scale, set_text, show, wide};
+
 // ---- Layout [D§2], [D§3] -------------------------------------------------
 
 const CLIENT_W: i32 = 300;
@@ -141,36 +145,7 @@ fn app<R>(f: impl FnOnce(&mut App) -> R) -> R {
     APP.with_borrow_mut(f)
 }
 
-// ---- Small helpers ------------------------------------------------------------
-
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(Some(0)).collect()
-}
-
-fn scale(v: i32, dpi: u32) -> i32 {
-    v * dpi as i32 / 96
-}
-
-fn item(hwnd: HWND, id: i32) -> HWND {
-    unsafe { GetDlgItem(hwnd, id) }
-}
-
-fn set_text(hwnd: HWND, s: &str) {
-    unsafe { SetWindowTextW(hwnd, wide(s).as_ptr()) };
-}
-
-fn enable(hwnd: HWND, id: i32, on: bool) {
-    unsafe { EnableWindow(item(hwnd, id), on as i32) };
-}
-
-fn show(hwnd: HWND, id: i32, on: bool) {
-    unsafe { ShowWindow(item(hwnd, id), if on { SW_SHOW } else { SW_HIDE }) };
-}
-
-// Selected index of a dropdown.
-fn combo(hwnd: HWND, id: i32) -> usize {
-    unsafe { SendMessageW(item(hwnd, id), CB_GETCURSEL, 0, 0) as usize }
-}
+// ---- Hotkey names ---------------------------------------------------------------------
 
 fn key_name(vk: u32) -> String {
     // Extended keys need bit 24, or GetKeyNameText returns the numpad names ("Num 4" for Left).
