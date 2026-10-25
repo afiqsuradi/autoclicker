@@ -19,7 +19,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 mod hotkey;
 mod win;
 
-use hotkey::{HOTKEY_ID, hotkey_allowed, hotkey_name, is_modifier_vk};
+use hotkey::{HOTKEY_ID, Hotkey, is_modifier_vk};
 use win::{combo, enable, item, scale, set_text, show, wide};
 
 // ---- Layout [D§2], [D§3] -------------------------------------------------
@@ -101,7 +101,7 @@ enum Mode {
 struct App {
     mode: Mode,
     spot: Option<POINT>,
-    hotkey: Option<(u32, u32)>, // (MOD_* flags, virtual key); None = not registered
+    hotkey: Option<Hotkey>, // None = not registered
     clicks: Arc<AtomicU64>,
     worker: Option<(JoinHandle<()>, Arc<AtomicBool>)>, // (thread, stop flag)
     msgbox_open: bool,
@@ -133,7 +133,7 @@ thread_local! {
     static APP: RefCell<App> = RefCell::new(App {
         mode: Mode::Idle,
         spot: None,
-        hotkey: Some((0, VK_F6 as u32)),
+        hotkey: Some(Hotkey::F6),
         clicks: Arc::new(AtomicU64::new(0)),
         worker: None,
         msgbox_open: false,
@@ -303,19 +303,18 @@ fn start_capture(hwnd: HWND) {
 }
 
 // `new` = None cancels. Falls back to the old hotkey if the new one can't be registered.
-fn finish_capture(hwnd: HWND, new: Option<(u32, u32)>) {
+fn finish_capture(hwnd: HWND, new: Option<Hotkey>) {
     let old = app(|a| a.hotkey);
-    let register = |(m, vk): (u32, u32)| unsafe { RegisterHotKey(hwnd, HOTKEY_ID, m | MOD_NOREPEAT, vk) } != 0;
     let mut err = None;
-    let mut hotkey = new.filter(|&h| register(h));
-    if let (Some((m, vk)), None) = (new, hotkey) {
+    let mut hotkey = new.filter(|h| h.register(hwnd));
+    if let (Some(h), None) = (new, hotkey) {
         err = Some(format!(
             "\"{}\" is already taken by another app or by Windows. Try a different one.",
-            hotkey_name(m, vk)
+            h.name()
         ));
     }
     if hotkey.is_none() {
-        hotkey = old.filter(|&h| register(h));
+        hotkey = old.filter(|h| h.register(hwnd));
     }
     app(|a| {
         a.hotkey = hotkey;
@@ -345,8 +344,9 @@ fn on_capture_key(hwnd: HWND, vk: u32) {
         unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
         return;
     }
-    if hotkey_allowed(mods, vk) {
-        finish_capture(hwnd, Some((mods, vk)));
+    let new = Hotkey { mods, vk };
+    if new.is_allowed() {
+        finish_capture(hwnd, Some(new));
     } else {
         show_msg(hwnd, MSG_BAREKEY); // stay in capture mode
     }
@@ -495,7 +495,7 @@ fn apply_state(hwnd: HWND) {
     enable(hwnd, ID_CURSOR_HINT, false); // disabled static = grey hint text
     let hk = match (mode, hotkey) {
         (Capturing, _) => "Press a key…".to_string(),
-        (_, Some((m, vk))) => hotkey_name(m, vk),
+        (_, Some(h)) => h.name(),
         (_, None) => "(none – click to set)".to_string(),
     };
     set_text(item(hwnd, ID_HOTKEY), &hk);
@@ -586,7 +586,7 @@ fn main() {
         SetWindowPos(hwnd, null_mut(), 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER);
         create_controls(hwnd);
         layout(hwnd, dpi);
-        if RegisterHotKey(hwnd, HOTKEY_ID, MOD_NOREPEAT, VK_F6 as u32) == 0 {
+        if !Hotkey::F6.register(hwnd) {
             app(|a| a.hotkey = None); // F6 taken by another app [D§5]
         }
         apply_state(hwnd);

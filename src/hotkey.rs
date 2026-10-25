@@ -1,8 +1,39 @@
 // Hotkey names and the rules for which combos are allowed.
 
+use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 
 pub const HOTKEY_ID: i32 = 1;
+
+/// A global hotkey: MOD_* flags plus a virtual key.
+#[derive(Clone, Copy)]
+pub struct Hotkey {
+    pub mods: u32,
+    pub vk: u32,
+}
+
+impl Hotkey {
+    pub const F6: Hotkey = Hotkey { mods: 0, vk: VK_F6 as u32 };
+
+    pub fn name(self) -> String {
+        let mut s = String::new();
+        if self.mods & MOD_CONTROL != 0 { s += "Ctrl+"; }
+        if self.mods & MOD_ALT != 0 { s += "Alt+"; }
+        if self.mods & MOD_SHIFT != 0 { s += "Shift+"; }
+        s + &key_name(self.vk)
+    }
+
+    // A bare letter/digit hotkey would swallow that key in every app, so plain keys must be F1–F24.
+    // Shift alone doesn't count: a Shift+A hotkey would stop capital A from typing anywhere.
+    pub fn is_allowed(self) -> bool {
+        self.mods & (MOD_CONTROL | MOD_ALT) != 0 || (VK_F1 as u32..=VK_F24 as u32).contains(&self.vk)
+    }
+
+    /// Registers this as our global hotkey on `hwnd`. False if another app or Windows has it.
+    pub fn register(self, hwnd: HWND) -> bool {
+        unsafe { RegisterHotKey(hwnd, HOTKEY_ID, self.mods | MOD_NOREPEAT, self.vk) != 0 }
+    }
+}
 
 fn key_name(vk: u32) -> String {
     // Extended keys need bit 24, or GetKeyNameText returns the numpad names ("Num 4" for Left).
@@ -19,14 +50,6 @@ fn key_name(vk: u32) -> String {
     if n > 0 { String::from_utf16_lossy(&buf[..n as usize]) } else { format!("Key {vk}") }
 }
 
-pub fn hotkey_name(mods: u32, vk: u32) -> String {
-    let mut s = String::new();
-    if mods & MOD_CONTROL != 0 { s += "Ctrl+"; }
-    if mods & MOD_ALT != 0 { s += "Alt+"; }
-    if mods & MOD_SHIFT != 0 { s += "Shift+"; }
-    s + &key_name(vk)
-}
-
 pub fn is_modifier_vk(vk: u32) -> bool {
     matches!(
         vk as u16,
@@ -35,18 +58,13 @@ pub fn is_modifier_vk(vk: u32) -> bool {
     )
 }
 
-// A bare letter/digit hotkey would swallow that key in every app, so plain keys must be F1–F24.
-// Shift alone doesn't count: a Shift+A hotkey would stop capital A from typing anywhere.
-pub fn hotkey_allowed(mods: u32, vk: u32) -> bool {
-    mods & (MOD_CONTROL | MOD_ALT) != 0 || (VK_F1 as u32..=VK_F24 as u32).contains(&vk)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn hotkey_rules() {
+        let hotkey_allowed = |mods, vk| Hotkey { mods, vk }.is_allowed();
         let a = b'A' as u32;
         assert!(hotkey_allowed(0, VK_F6 as u32));
         assert!(hotkey_allowed(0, VK_F24 as u32));
