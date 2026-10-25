@@ -1,10 +1,8 @@
 #![windows_subsystem = "windows"]
 
-use std::cell::RefCell;
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
@@ -16,10 +14,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 mod clicker;
 mod hotkey;
+mod state;
 mod win;
 
 use clicker::{Config, Worker};
 use hotkey::{HOTKEY_ID, Hotkey, is_modifier_vk};
+use state::{Mode, app};
 use win::{combo, enable, item, scale, set_text, show, wide};
 
 // ---- Layout [D§2], [D§3] -------------------------------------------------
@@ -88,26 +88,6 @@ const CONTROLS: [Ctl; 18] = [
     Ctl { id: ID_STATUS, class: "STATIC", text: "Stopped · 0 clicks", x: 16, y: 256, w: 268, h: 18, style: CENTER, ex: 0 },
 ];
 
-// ---- State ------------------------------------------------------------------
-
-#[derive(Clone, Copy, PartialEq)]
-enum Mode {
-    Idle,
-    Running,
-    Picking,
-    Capturing,
-}
-
-struct App {
-    mode: Mode,
-    spot: Option<POINT>,
-    hotkey: Option<Hotkey>, // None = not registered
-    clicks: Arc<AtomicU64>,
-    worker: Option<Worker>,
-    msgbox_open: bool,
-    font: HFONT, // current UI font, replaced when the window moves to a monitor with other scaling
-}
-
 const TIMER_STATUS: usize = 1;
 const WM_APP_PICKED: u32 = WM_APP + 1; // wParam: 1 = picked, 0 = cancelled; lParam: packed point
 const OVERLAY_ALPHA: u8 = 60; // [D§6]
@@ -119,23 +99,6 @@ const MSG_MINMAX: &str = "Minimum can't be larger than maximum.";
 const MSG_NOSPOT: &str = "Pick a spot first (click \"Pick…\").";
 const MSG_BAREKEY: &str =
     "Use an F-key, or add Ctrl or Alt. A plain key (or Shift+key) would stop working everywhere else.";
-
-thread_local! {
-    static APP: RefCell<App> = RefCell::new(App {
-        mode: Mode::Idle,
-        spot: None,
-        hotkey: Some(Hotkey::F6),
-        clicks: Arc::new(AtomicU64::new(0)),
-        worker: None,
-        msgbox_open: false,
-        font: null_mut(),
-    });
-}
-
-// Never call anything that can re-enter the window procedure inside `f` (borrow would panic).
-fn app<R>(f: impl FnOnce(&mut App) -> R) -> R {
-    APP.with_borrow_mut(f)
-}
 
 // ---- Start / stop -------------------------------------------------------------------
 
