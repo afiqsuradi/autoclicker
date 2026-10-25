@@ -16,8 +16,10 @@ use windows_sys::Win32::UI::HiDpi::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
+mod hotkey;
 mod win;
 
+use hotkey::{HOTKEY_ID, hotkey_allowed, hotkey_name, is_modifier_vk};
 use win::{combo, enable, item, scale, set_text, show, wide};
 
 // ---- Layout [D§2], [D§3] -------------------------------------------------
@@ -107,7 +109,6 @@ struct App {
 }
 
 const TIMER_STATUS: usize = 1;
-const HOTKEY_ID: i32 = 1;
 const WM_APP_PICKED: u32 = WM_APP + 1; // wParam: 1 = picked, 0 = cancelled; lParam: packed point
 const OVERLAY_ALPHA: u8 = 60; // [D§6]
 
@@ -143,31 +144,6 @@ thread_local! {
 // Never call anything that can re-enter the window procedure inside `f` (borrow would panic).
 fn app<R>(f: impl FnOnce(&mut App) -> R) -> R {
     APP.with_borrow_mut(f)
-}
-
-// ---- Hotkey names ---------------------------------------------------------------------
-
-fn key_name(vk: u32) -> String {
-    // Extended keys need bit 24, or GetKeyNameText returns the numpad names ("Num 4" for Left).
-    let ext = matches!(
-        vk as u16,
-        VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN | VK_INSERT | VK_DELETE | VK_HOME | VK_END
-            | VK_PRIOR | VK_NEXT | VK_DIVIDE | VK_NUMLOCK | VK_RCONTROL | VK_RMENU
-    );
-    let mut buf = [0u16; 64];
-    let n = unsafe {
-        let sc = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-        GetKeyNameTextW(((sc << 16) | if ext { 1 << 24 } else { 0 }) as i32, buf.as_mut_ptr(), 64)
-    };
-    if n > 0 { String::from_utf16_lossy(&buf[..n as usize]) } else { format!("Key {vk}") }
-}
-
-fn hotkey_name(mods: u32, vk: u32) -> String {
-    let mut s = String::new();
-    if mods & MOD_CONTROL != 0 { s += "Ctrl+"; }
-    if mods & MOD_ALT != 0 { s += "Alt+"; }
-    if mods & MOD_SHIFT != 0 { s += "Shift+"; }
-    s + &key_name(vk)
 }
 
 // ---- Clicking -----------------------------------------------------------------------
@@ -314,20 +290,6 @@ fn toggle(hwnd: HWND) {
 }
 
 // ---- Hotkey capture -------------------------------------------------------------------
-
-fn is_modifier_vk(vk: u32) -> bool {
-    matches!(
-        vk as u16,
-        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LSHIFT | VK_RSHIFT | VK_LCONTROL | VK_RCONTROL
-            | VK_LMENU | VK_RMENU | VK_LWIN | VK_RWIN
-    )
-}
-
-// A bare letter/digit hotkey would swallow that key in every app, so plain keys must be F1–F24.
-// Shift alone doesn't count: a Shift+A hotkey would stop capital A from typing anywhere.
-fn hotkey_allowed(mods: u32, vk: u32) -> bool {
-    mods & (MOD_CONTROL | MOD_ALT) != 0 || (VK_F1 as u32..=VK_F24 as u32).contains(&vk)
-}
 
 fn start_capture(hwnd: HWND) {
     if app(|a| a.mode) != Mode::Idle {
@@ -742,29 +704,6 @@ mod tests {
             hi |= d == 7;
         }
         assert!(lo && hi);
-    }
-
-    #[test]
-    fn hotkey_rules() {
-        let a = b'A' as u32;
-        assert!(hotkey_allowed(0, VK_F6 as u32));
-        assert!(hotkey_allowed(0, VK_F24 as u32));
-        assert!(!hotkey_allowed(0, a));
-        assert!(!hotkey_allowed(0, 0x20)); // space
-        assert!(hotkey_allowed(MOD_CONTROL, a));
-        assert!(hotkey_allowed(MOD_ALT, b'1' as u32));
-        assert!(!hotkey_allowed(MOD_SHIFT, a)); // would block typing capital A
-        assert!(hotkey_allowed(MOD_CONTROL | MOD_SHIFT, a));
-        assert!(hotkey_allowed(MOD_SHIFT, VK_F6 as u32));
-    }
-
-    #[test]
-    fn modifier_keys() {
-        for vk in [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LSHIFT, VK_RCONTROL, VK_LMENU, VK_LWIN, VK_RWIN] {
-            assert!(is_modifier_vk(vk as u32));
-        }
-        assert!(!is_modifier_vk(VK_F6 as u32));
-        assert!(!is_modifier_vk(b'A' as u32));
     }
 
     #[test]
