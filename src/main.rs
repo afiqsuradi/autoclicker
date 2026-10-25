@@ -18,21 +18,24 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 // ---- Layout [D§2], [D§3] -------------------------------------------------
 
-const CLIENT_W: i32 = 320;
+const CLIENT_W: i32 = 300;
 const CLIENT_H: i32 = 286;
 const MAIN_STYLE: WINDOW_STYLE = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
 
 // IDs start at 100: IsDialogMessage sends 1 (IDOK) on Enter and 2 (IDCANCEL) on Esc.
-const ID_FIXED: i32 = 101;
-const ID_RANDOM: i32 = 102;
+const ID_MODE: i32 = 101; // interval dropdown: 0 = Fixed, 1 = Random
 const ID_FIXED_MS: i32 = 103;
 const ID_MIN_MS: i32 = 104;
 const ID_MAX_MS: i32 = 105;
-const ID_CURSOR: i32 = 111;
-const ID_SPOT: i32 = 112;
+const ID_FIXED_UNIT: i32 = 106;
+const ID_DASH: i32 = 107;
+const ID_RANDOM_UNIT: i32 = 108;
+const ID_LOC: i32 = 111; // click-at dropdown: 0 = Cursor, 1 = Fixed spot
+const ID_CURSOR_HINT: i32 = 112;
 const ID_PICK: i32 = 113;
 const ID_SPOT_LBL: i32 = 114;
-const ID_HOTKEY: i32 = 122;
+const ID_HOTKEY: i32 = 122; // read-only box showing the hotkey
+const ID_CHANGE: i32 = 123;
 const ID_START: i32 = 130;
 const ID_STATUS: i32 = 131;
 
@@ -48,35 +51,35 @@ struct Ctl {
     ex: u32,
 }
 
-const GROUPBOX: u32 = BS_GROUPBOX as u32 | WS_GROUP;
-const RADIO: u32 = BS_AUTORADIOBUTTON as u32;
+const DROPDOWN: u32 = CBS_DROPDOWNLIST as u32 | WS_VSCROLL | WS_TABSTOP;
 const NUMBER: u32 = (ES_NUMBER | ES_RIGHT | ES_AUTOHSCROLL) as u32 | WS_TABSTOP;
 const PUSH: u32 = BS_PUSHBUTTON as u32 | WS_TABSTOP;
 const LABEL: u32 = 0; // SS_LEFT (lives behind an extra windows-sys feature)
+const CENTER: u32 = 1; // SS_CENTER (same)
 const EDGE: u32 = WS_EX_CLIENTEDGE;
 
-// Creation order = Tab order = radio grouping, exactly as the [D§3] table.
+// Creation order = Tab order, exactly as the [D§3] table. Rows that share a y are alternatives:
+// only the ones matching the dropdown choice are shown.
 #[rustfmt::skip]
-const CONTROLS: [Ctl; 19] = [
-    Ctl { id: 100, class: "BUTTON", text: "Interval", x: 12, y: 8, w: 296, h: 80, style: GROUPBOX, ex: 0 },
-    Ctl { id: ID_FIXED, class: "BUTTON", text: "&Fixed", x: 24, y: 30, w: 76, h: 20, style: RADIO | WS_GROUP | WS_TABSTOP, ex: 0 },
-    Ctl { id: ID_RANDOM, class: "BUTTON", text: "&Random", x: 24, y: 56, w: 76, h: 20, style: RADIO, ex: 0 },
-    Ctl { id: ID_FIXED_MS, class: "EDIT", text: "100", x: 104, y: 28, w: 64, h: 23, style: NUMBER | WS_GROUP, ex: EDGE },
-    Ctl { id: ID_MIN_MS, class: "EDIT", text: "80", x: 104, y: 54, w: 64, h: 23, style: NUMBER, ex: EDGE },
-    Ctl { id: ID_MAX_MS, class: "EDIT", text: "150", x: 196, y: 54, w: 64, h: 23, style: NUMBER, ex: EDGE },
-    Ctl { id: 106, class: "STATIC", text: "ms", x: 174, y: 31, w: 24, h: 20, style: LABEL, ex: 0 },
-    Ctl { id: 107, class: "STATIC", text: "to", x: 174, y: 57, w: 18, h: 20, style: LABEL, ex: 0 },
-    Ctl { id: 108, class: "STATIC", text: "ms", x: 266, y: 57, w: 24, h: 20, style: LABEL, ex: 0 },
-    Ctl { id: 110, class: "BUTTON", text: "Click location", x: 12, y: 96, w: 296, h: 80, style: GROUPBOX, ex: 0 },
-    Ctl { id: ID_CURSOR, class: "BUTTON", text: "At &cursor", x: 24, y: 118, w: 120, h: 20, style: RADIO | WS_GROUP | WS_TABSTOP, ex: 0 },
-    Ctl { id: ID_SPOT, class: "BUTTON", text: "Fixed &spot", x: 24, y: 144, w: 84, h: 20, style: RADIO, ex: 0 },
-    Ctl { id: ID_PICK, class: "BUTTON", text: "&Pick…", x: 112, y: 141, w: 72, h: 26, style: PUSH | WS_GROUP, ex: 0 },
-    Ctl { id: ID_SPOT_LBL, class: "STATIC", text: "not set", x: 192, y: 146, w: 108, h: 20, style: LABEL, ex: 0 },
-    Ctl { id: 120, class: "BUTTON", text: "Hotkey", x: 12, y: 184, w: 296, h: 54, style: GROUPBOX, ex: 0 },
-    Ctl { id: 121, class: "STATIC", text: "Start / stop", x: 24, y: 207, w: 76, h: 20, style: LABEL, ex: 0 },
-    Ctl { id: ID_HOTKEY, class: "BUTTON", text: "F6", x: 104, y: 202, w: 192, h: 26, style: PUSH | WS_GROUP, ex: 0 },
-    Ctl { id: ID_START, class: "BUTTON", text: "Start", x: 12, y: 248, w: 120, h: 30, style: PUSH, ex: 0 },
-    Ctl { id: ID_STATUS, class: "STATIC", text: "Stopped · 0 clicks", x: 144, y: 255, w: 164, h: 20, style: LABEL, ex: 0 },
+const CONTROLS: [Ctl; 18] = [
+    Ctl { id: 100, class: "STATIC", text: "&Interval", x: 16, y: 19, w: 76, h: 20, style: LABEL, ex: 0 },
+    Ctl { id: ID_MODE, class: "COMBOBOX", text: "", x: 96, y: 16, w: 188, h: 120, style: DROPDOWN, ex: 0 },
+    Ctl { id: ID_FIXED_MS, class: "EDIT", text: "100", x: 96, y: 48, w: 72, h: 23, style: NUMBER, ex: EDGE },
+    Ctl { id: ID_FIXED_UNIT, class: "STATIC", text: "ms", x: 176, y: 51, w: 24, h: 20, style: LABEL, ex: 0 },
+    Ctl { id: ID_MIN_MS, class: "EDIT", text: "80", x: 96, y: 48, w: 72, h: 23, style: NUMBER, ex: EDGE },
+    Ctl { id: ID_DASH, class: "STATIC", text: "–", x: 168, y: 51, w: 20, h: 20, style: CENTER, ex: 0 },
+    Ctl { id: ID_MAX_MS, class: "EDIT", text: "150", x: 188, y: 48, w: 72, h: 23, style: NUMBER, ex: EDGE },
+    Ctl { id: ID_RANDOM_UNIT, class: "STATIC", text: "ms", x: 266, y: 51, w: 24, h: 20, style: LABEL, ex: 0 },
+    Ctl { id: 110, class: "STATIC", text: "Click &at", x: 16, y: 95, w: 76, h: 20, style: LABEL, ex: 0 },
+    Ctl { id: ID_LOC, class: "COMBOBOX", text: "", x: 96, y: 92, w: 188, h: 120, style: DROPDOWN, ex: 0 },
+    Ctl { id: ID_CURSOR_HINT, class: "STATIC", text: "Clicks wherever the mouse is", x: 96, y: 127, w: 188, h: 20, style: LABEL, ex: 0 },
+    Ctl { id: ID_PICK, class: "BUTTON", text: "&Pick…", x: 96, y: 122, w: 80, h: 26, style: PUSH, ex: 0 },
+    Ctl { id: ID_SPOT_LBL, class: "STATIC", text: "not set", x: 184, y: 127, w: 100, h: 20, style: LABEL, ex: 0 },
+    Ctl { id: 120, class: "STATIC", text: "&Hotkey", x: 16, y: 171, w: 76, h: 20, style: LABEL, ex: 0 },
+    Ctl { id: ID_HOTKEY, class: "EDIT", text: "F6", x: 96, y: 168, w: 104, h: 25, style: (ES_READONLY | ES_CENTER) as u32, ex: EDGE },
+    Ctl { id: ID_CHANGE, class: "BUTTON", text: "&Change", x: 208, y: 167, w: 76, h: 27, style: PUSH, ex: 0 },
+    Ctl { id: ID_START, class: "BUTTON", text: "Start", x: 16, y: 210, w: 268, h: 36, style: BS_OWNERDRAW as u32 | WS_TABSTOP, ex: 0 },
+    Ctl { id: ID_STATUS, class: "STATIC", text: "Stopped · 0 clicks", x: 16, y: 256, w: 268, h: 18, style: CENTER, ex: 0 },
 ];
 
 // ---- State ------------------------------------------------------------------
@@ -158,6 +161,15 @@ fn set_text(hwnd: HWND, s: &str) {
 
 fn enable(hwnd: HWND, id: i32, on: bool) {
     unsafe { EnableWindow(item(hwnd, id), on as i32) };
+}
+
+fn show(hwnd: HWND, id: i32, on: bool) {
+    unsafe { ShowWindow(item(hwnd, id), if on { SW_SHOW } else { SW_HIDE }) };
+}
+
+// Selected index of a dropdown.
+fn combo(hwnd: HWND, id: i32) -> usize {
+    unsafe { SendMessageW(item(hwnd, id), CB_GETCURSEL, 0, 0) as usize }
 }
 
 fn key_name(vk: u32) -> String {
@@ -260,8 +272,7 @@ fn read_ms(hwnd: HWND, id: i32) -> Option<u32> {
 }
 
 fn read_config(hwnd: HWND) -> Result<Config, &'static str> {
-    let checked = |id| unsafe { IsDlgButtonChecked(hwnd, id) } == BST_CHECKED;
-    let (min, max) = if checked(ID_FIXED) {
+    let (min, max) = if combo(hwnd, ID_MODE) == 0 {
         let v = read_ms(hwnd, ID_FIXED_MS).ok_or(MSG_FIXED)?;
         (v, v)
     } else {
@@ -271,7 +282,7 @@ fn read_config(hwnd: HWND) -> Result<Config, &'static str> {
         }
         (a, b)
     };
-    let spot = if checked(ID_SPOT) { Some(app(|a| a.spot).ok_or(MSG_NOSPOT)?) } else { None };
+    let spot = if combo(hwnd, ID_LOC) == 1 { Some(app(|a| a.spot).ok_or(MSG_NOSPOT)?) } else { None };
     Ok(Config { min, max, spot, main: hwnd as isize })
 }
 
@@ -351,7 +362,7 @@ fn start_capture(hwnd: HWND) {
     unsafe { UnregisterHotKey(hwnd, HOTKEY_ID) };
     app(|a| a.mode = Mode::Capturing);
     apply_state(hwnd);
-    unsafe { SetFocus(item(hwnd, ID_HOTKEY)) };
+    unsafe { SetFocus(item(hwnd, ID_CHANGE)) };
 }
 
 // `new` = None cancels. Falls back to the old hotkey if the new one can't be registered.
@@ -480,8 +491,13 @@ fn create_controls(hwnd: HWND) {
         for id in [ID_FIXED_MS, ID_MIN_MS, ID_MAX_MS] {
             SendMessageW(item(hwnd, id), EM_SETLIMITTEXT, 7, 0);
         }
-        CheckRadioButton(hwnd, ID_FIXED, ID_RANDOM, ID_FIXED);
-        CheckRadioButton(hwnd, ID_CURSOR, ID_SPOT, ID_CURSOR);
+        for (id, choices) in [(ID_MODE, ["Fixed", "Random"]), (ID_LOC, ["Cursor", "Fixed spot"])] {
+            for c in choices {
+                let w = wide(c);
+                SendMessageW(item(hwnd, id), CB_ADDSTRING, 0, w.as_ptr() as LPARAM);
+            }
+            SendMessageW(item(hwnd, id), CB_SETCURSEL, 0, 0);
+        }
     }
 }
 
@@ -528,19 +544,75 @@ fn apply_state(hwnd: HWND) {
     set_text(item(hwnd, ID_STATUS), &status);
     set_text(item(hwnd, ID_START), if mode == Running { "Stop" } else { "Start" });
     enable(hwnd, ID_START, matches!(mode, Idle | Running));
-    for id in [ID_FIXED, ID_RANDOM, ID_FIXED_MS, ID_MIN_MS, ID_MAX_MS, ID_CURSOR, ID_SPOT, ID_PICK] {
+    unsafe { InvalidateRect(item(hwnd, ID_START), null(), 1) }; // owner-drawn: colour follows mode
+    for id in [ID_MODE, ID_FIXED_MS, ID_MIN_MS, ID_MAX_MS, ID_LOC, ID_PICK] {
         enable(hwnd, id, mode == Idle);
     }
+    // Only the row matching each dropdown's choice is visible [D§3].
+    let fixed = combo(hwnd, ID_MODE) == 0;
+    let at_spot = combo(hwnd, ID_LOC) == 1;
+    for id in [ID_FIXED_MS, ID_FIXED_UNIT] { show(hwnd, id, fixed); }
+    for id in [ID_MIN_MS, ID_DASH, ID_MAX_MS, ID_RANDOM_UNIT] { show(hwnd, id, !fixed); }
+    show(hwnd, ID_CURSOR_HINT, !at_spot);
+    for id in [ID_PICK, ID_SPOT_LBL] { show(hwnd, id, at_spot); }
+    enable(hwnd, ID_CURSOR_HINT, false); // disabled static = grey hint text
     let hk = match (mode, hotkey) {
         (Capturing, _) => "Press a key…".to_string(),
         (_, Some((m, vk))) => hotkey_name(m, vk),
         (_, None) => "(none – click to set)".to_string(),
     };
     set_text(item(hwnd, ID_HOTKEY), &hk);
-    enable(hwnd, ID_HOTKEY, matches!(mode, Idle | Capturing));
+    set_text(item(hwnd, ID_CHANGE), if mode == Capturing { "Cancel" } else { "&Change" });
+    enable(hwnd, ID_CHANGE, matches!(mode, Idle | Capturing));
     let spot_text = spot.map_or("not set".to_string(), |p| format!("{}, {}", p.x, p.y));
     set_text(item(hwnd, ID_SPOT_LBL), &spot_text);
     enable(hwnd, ID_SPOT_LBL, spot.is_some()); // disabled static = grey "not set"
+}
+
+// Big Start/Stop button [D§3]: accent fill when idle, red while running, grey when disabled.
+fn draw_start(d: &DRAWITEMSTRUCT) {
+    let running = app(|a| a.mode) == Mode::Running;
+    let font = app(|a| a.font);
+    unsafe {
+        let (dc, r) = (d.hDC, d.rcItem);
+        FillRect(dc, &r, GetSysColorBrush(COLOR_BTNFACE));
+        let disabled = d.itemState & ODS_DISABLED != 0;
+        let base = if running { 0x002B_2BC4 } else { GetSysColor(COLOR_HIGHLIGHT) }; // 0x00BBGGRR
+        let fill = if disabled {
+            0x00D6_D6D6
+        } else if d.itemState & ODS_SELECTED != 0 {
+            darken(base)
+        } else {
+            base
+        };
+        let (brush, pen) = (CreateSolidBrush(fill), CreatePen(PS_SOLID, 1, fill));
+        let (old_brush, old_pen) = (SelectObject(dc, brush), SelectObject(dc, pen));
+        let radius = (r.bottom - r.top) / 4;
+        RoundRect(dc, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(brush);
+        DeleteObject(pen);
+
+        let mut buf = [0u16; 16];
+        let n = GetWindowTextW(d.hwndItem, buf.as_mut_ptr(), buf.len() as i32);
+        let old_font = SelectObject(dc, font);
+        SetBkMode(dc, TRANSPARENT as i32);
+        SetTextColor(dc, if disabled { GetSysColor(COLOR_GRAYTEXT) } else { 0x00FF_FFFF });
+        let mut tr = r;
+        DrawTextW(dc, buf.as_ptr(), n, &mut tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, old_font);
+        if d.itemState & ODS_FOCUS != 0 && d.itemState & ODS_NOFOCUSRECT == 0 {
+            let inset = RECT { left: r.left + 3, top: r.top + 3, right: r.right - 3, bottom: r.bottom - 3 };
+            SetTextColor(dc, 0x00FF_FFFF);
+            DrawFocusRect(dc, &inset);
+        }
+    }
+}
+
+fn darken(c: u32) -> u32 {
+    let ch = |shift: u32| (((c >> shift) & 0xFF) * 4 / 5) << shift;
+    ch(0) | ch(8) | ch(16)
 }
 
 fn main() {
@@ -611,12 +683,10 @@ extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                 let id = (wp & 0xFFFF) as i32;
                 let code = ((wp >> 16) & 0xFFFF) as u32;
                 match (id, code) {
-                    // Typing in an interval box selects its radio [D§3]. EN_CHANGE, not EN_SETFOCUS,
-                    // so merely tabbing past a box doesn't flip the mode.
-                    (ID_FIXED_MS, EN_CHANGE) => { CheckRadioButton(hwnd, ID_FIXED, ID_RANDOM, ID_FIXED); }
-                    (ID_MIN_MS | ID_MAX_MS, EN_CHANGE) => { CheckRadioButton(hwnd, ID_FIXED, ID_RANDOM, ID_RANDOM); }
+                    (ID_MODE | ID_LOC, CBN_SELCHANGE) => apply_state(hwnd),
                     (ID_START, BN_CLICKED) => toggle(hwnd),
-                    (ID_HOTKEY, BN_CLICKED) => start_capture(hwnd),
+                    (ID_CHANGE, BN_CLICKED) if app(|a| a.mode) == Mode::Capturing => finish_capture(hwnd, None),
+                    (ID_CHANGE, BN_CLICKED) => start_capture(hwnd),
                     (ID_PICK, BN_CLICKED) => start_pick(hwnd),
                     _ => {}
                 }
@@ -626,7 +696,7 @@ extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                 if app(|a| a.mode) == Mode::Picking {
                     if wp == 1 {
                         app(|a| a.spot = Some(unpack_point(lp)));
-                        CheckRadioButton(hwnd, ID_CURSOR, ID_SPOT, ID_SPOT);
+                        SendMessageW(item(hwnd, ID_LOC), CB_SETCURSEL, 1, 0);
                     }
                     app(|a| a.mode = Mode::Idle);
                     apply_state(hwnd);
@@ -637,6 +707,10 @@ extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
             WM_HOTKEY => {
                 toggle(hwnd);
                 0
+            }
+            WM_DRAWITEM if wp == ID_START as usize => {
+                draw_start(&*(lp as *const DRAWITEMSTRUCT));
+                1
             }
             // Moved to a monitor with different scaling: resize and re-lay out for the new DPI.
             WM_DPICHANGED => {

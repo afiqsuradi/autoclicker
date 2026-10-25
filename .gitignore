@@ -1,2 +1,18 @@
+# Build output (the exe is published as a GitHub Release, not committed)
 /target
 /dist
+*.pdb
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS junk
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# rustfmt backups
+**/*.rs.bk

@@ -1,0 +1,4 @@
+# Store text with LF in the repo; Git converts to the platform's endings on checkout.
+* text=auto eol=lf
+*.exe binary
+*.png binary
