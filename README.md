@@ -20,6 +20,16 @@ cargo build --release --locked
 ```
 The output is `target\release\autoclicker.exe`. Run `cargo test` for the unit tests.
 
+## Code layout
+- `main.rs`: entry point, window classes, message loop and window procedure.
+- `ui.rs`: the control table, DPI layout, `apply_state` and message boxes.
+- `state.rs`: the app state (`Mode`, `App`) behind `app()`.
+- `runner.rs`: reads the settings, starts and stops clicking.
+- `clicker.rs`: the click thread (`Worker`) and timing.
+- `hotkey.rs` / `capture.rs`: hotkey rules, and the Change flow that captures a new one.
+- `pick.rs`: the Pick overlay.
+- `win.rs`: small Win32 helpers.
+
 ## Notes
 - Windows blocks clicks into apps running as administrator unless AutoClicker also runs as admin.
 - Online games with anti-cheat may ban autoclickers. Use at your own risk.
