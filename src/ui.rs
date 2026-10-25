@@ -1,6 +1,7 @@
-// The main window's controls: the [D§3] table, creating them and laying them out per DPI.
+// The main window: the [D§3] control table, layout per DPI, state display [D§4] and messages [D§5].
 
 use std::ptr::null;
+use std::sync::atomic::Ordering;
 
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
@@ -9,8 +10,8 @@ use windows_sys::Win32::UI::Controls::*;
 use windows_sys::Win32::UI::HiDpi::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-use crate::state::app;
-use crate::win::{item, scale, wide};
+use crate::state::{Mode, app};
+use crate::win::{combo, enable, item, scale, set_text, show, wide};
 
 // ---- Layout [D§2], [D§3] -------------------------------------------------
 
@@ -126,4 +127,109 @@ pub fn layout(hwnd: HWND, dpi: u32) {
             DeleteObject(old);
         }
     }
+}
+
+// ---- State display [D§4] ---------------------------------------------------------
+
+// Sets every enabled flag and text from the current mode, per the [D§4] table.
+pub fn apply_state(hwnd: HWND) {
+    use Mode::*;
+    let (mode, spot, hotkey, clicks) = app(|a| (a.mode, a.spot, a.hotkey, a.clicks.load(Ordering::Relaxed)));
+    let (title, status) = match mode {
+        Idle if hotkey.is_none() => ("AutoClicker", "Set a hotkey to begin".to_string()),
+        Idle => ("AutoClicker", format!("Stopped · {clicks} clicks")),
+        Running => ("AutoClicker – running", format!("Running · {clicks} clicks")),
+        Picking => ("AutoClicker – pick a spot", "Click anywhere · Esc cancels".to_string()),
+        Capturing => ("AutoClicker – set hotkey", "Press a combo · Esc cancels".to_string()),
+    };
+    set_text(hwnd, title);
+    set_text(item(hwnd, ID_STATUS), &status);
+    set_text(item(hwnd, ID_START), if mode == Running { "Stop" } else { "Start" });
+    enable(hwnd, ID_START, matches!(mode, Idle | Running));
+    unsafe { InvalidateRect(item(hwnd, ID_START), null(), 1) }; // owner-drawn: colour follows mode
+    for id in [ID_MODE, ID_FIXED_MS, ID_MIN_MS, ID_MAX_MS, ID_LOC, ID_PICK] {
+        enable(hwnd, id, mode == Idle);
+    }
+    // Only the row matching each dropdown's choice is visible [D§3].
+    let fixed = combo(hwnd, ID_MODE) == 0;
+    let at_spot = combo(hwnd, ID_LOC) == 1;
+    for id in [ID_FIXED_MS, ID_FIXED_UNIT] { show(hwnd, id, fixed); }
+    for id in [ID_MIN_MS, ID_DASH, ID_MAX_MS, ID_RANDOM_UNIT] { show(hwnd, id, !fixed); }
+    show(hwnd, ID_CURSOR_HINT, !at_spot);
+    for id in [ID_PICK, ID_SPOT_LBL] { show(hwnd, id, at_spot); }
+    enable(hwnd, ID_CURSOR_HINT, false); // disabled static = grey hint text
+    let hk = match (mode, hotkey) {
+        (Capturing, _) => "Press a key…".to_string(),
+        (_, Some(h)) => h.name(),
+        (_, None) => "(none – click to set)".to_string(),
+    };
+    set_text(item(hwnd, ID_HOTKEY), &hk);
+    set_text(item(hwnd, ID_CHANGE), if mode == Capturing { "Cancel" } else { "&Change" });
+    enable(hwnd, ID_CHANGE, matches!(mode, Idle | Capturing));
+    let spot_text = spot.map_or("not set".to_string(), |p| format!("{}, {}", p.x, p.y));
+    set_text(item(hwnd, ID_SPOT_LBL), &spot_text);
+    enable(hwnd, ID_SPOT_LBL, spot.is_some()); // disabled static = grey "not set"
+}
+
+// Big Start/Stop button [D§3]: accent fill when idle, red while running, grey when disabled.
+pub fn draw_start(d: &DRAWITEMSTRUCT) {
+    let running = app(|a| a.mode) == Mode::Running;
+    let font = app(|a| a.font);
+    unsafe {
+        let (dc, r) = (d.hDC, d.rcItem);
+        FillRect(dc, &r, GetSysColorBrush(COLOR_BTNFACE));
+        let disabled = d.itemState & ODS_DISABLED != 0;
+        let base = if running { 0x002B_2BC4 } else { GetSysColor(COLOR_HIGHLIGHT) }; // 0x00BBGGRR
+        let fill = if disabled {
+            0x00D6_D6D6
+        } else if d.itemState & ODS_SELECTED != 0 {
+            darken(base)
+        } else {
+            base
+        };
+        let (brush, pen) = (CreateSolidBrush(fill), CreatePen(PS_SOLID, 1, fill));
+        let (old_brush, old_pen) = (SelectObject(dc, brush), SelectObject(dc, pen));
+        let radius = (r.bottom - r.top) / 4;
+        RoundRect(dc, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(brush);
+        DeleteObject(pen);
+
+        let mut buf = [0u16; 16];
+        let n = GetWindowTextW(d.hwndItem, buf.as_mut_ptr(), buf.len() as i32);
+        let old_font = SelectObject(dc, font);
+        SetBkMode(dc, TRANSPARENT as i32);
+        SetTextColor(dc, if disabled { GetSysColor(COLOR_GRAYTEXT) } else { 0x00FF_FFFF });
+        let mut tr = r;
+        DrawTextW(dc, buf.as_ptr(), n, &mut tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, old_font);
+        if d.itemState & ODS_FOCUS != 0 && d.itemState & ODS_NOFOCUSRECT == 0 {
+            let inset = RECT { left: r.left + 3, top: r.top + 3, right: r.right - 3, bottom: r.bottom - 3 };
+            SetTextColor(dc, 0x00FF_FFFF);
+            DrawFocusRect(dc, &inset);
+        }
+    }
+}
+
+fn darken(c: u32) -> u32 {
+    let ch = |shift: u32| (((c >> shift) & 0xFF) * 4 / 5) << shift;
+    ch(0) | ch(8) | ch(16)
+}
+
+// ---- Messages [D§5] -----------------------------------------------------------------
+
+pub const MSG_FIXED: &str = "Enter an interval of at least 1 ms.";
+pub const MSG_RANGE: &str = "Enter a minimum and maximum of at least 1 ms.";
+pub const MSG_MINMAX: &str = "Minimum can't be larger than maximum.";
+pub const MSG_NOSPOT: &str = "Pick a spot first (click \"Pick…\").";
+pub const MSG_BAREKEY: &str =
+    "Use an F-key, or add Ctrl or Alt. A plain key (or Shift+key) would stop working everywhere else.";
+
+pub fn show_msg(hwnd: HWND, text: &str) {
+    app(|a| a.msgbox_open = true);
+    unsafe {
+        MessageBoxW(hwnd, wide(text).as_ptr(), wide("AutoClicker").as_ptr(), MB_OK | MB_ICONWARNING);
+    }
+    app(|a| a.msgbox_open = false);
 }
