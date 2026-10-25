@@ -4,8 +4,7 @@ use std::cell::RefCell;
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::thread::{self, JoinHandle};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
@@ -19,7 +18,7 @@ mod clicker;
 mod hotkey;
 mod win;
 
-use clicker::{Config, worker};
+use clicker::{Config, Worker};
 use hotkey::{HOTKEY_ID, Hotkey, is_modifier_vk};
 use win::{combo, enable, item, scale, set_text, show, wide};
 
@@ -104,7 +103,7 @@ struct App {
     spot: Option<POINT>,
     hotkey: Option<Hotkey>, // None = not registered
     clicks: Arc<AtomicU64>,
-    worker: Option<(JoinHandle<()>, Arc<AtomicBool>)>, // (thread, stop flag)
+    worker: Option<Worker>,
     msgbox_open: bool,
     font: HFONT, // current UI font, replaced when the window moves to a monitor with other scaling
 }
@@ -174,15 +173,13 @@ fn start(hwnd: HWND) {
         Ok(c) => c,
         Err(text) => return show_msg(hwnd, text),
     };
-    let stop = Arc::new(AtomicBool::new(false));
     let clicks = app(|a| {
         a.clicks.store(0, Ordering::Relaxed);
         a.clicks.clone()
     });
-    let stop2 = stop.clone();
-    let handle = thread::spawn(move || worker(cfg, stop2, clicks));
+    let worker = Worker::spawn(cfg, clicks);
     app(|a| {
-        a.worker = Some((handle, stop));
+        a.worker = Some(worker);
         a.mode = Mode::Running;
     });
     unsafe { SetTimer(hwnd, TIMER_STATUS, 250, None) };
@@ -195,9 +192,8 @@ fn stop(hwnd: HWND) {
         a.mode = Mode::Idle;
         a.worker.take()
     });
-    if let Some((handle, flag)) = worker {
-        flag.store(true, Ordering::Relaxed);
-        let _ = handle.join(); // returns within ~15 ms
+    if let Some(w) = worker {
+        w.stop();
     }
     unsafe { KillTimer(hwnd, TIMER_STATUS) };
     apply_state(hwnd);

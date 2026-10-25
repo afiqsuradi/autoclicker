@@ -3,7 +3,7 @@
 use std::mem::size_of;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{HWND, POINT};
@@ -17,6 +17,27 @@ pub struct Config {
     pub max: u32,
     pub spot: Option<POINT>,
     pub main: isize, // our HWND as an integer (HWND is a raw pointer, not Send)
+}
+
+/// The running click thread and its stop flag.
+pub struct Worker {
+    handle: JoinHandle<()>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Worker {
+    pub fn spawn(cfg: Config, clicks: Arc<AtomicU64>) -> Worker {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let handle = thread::spawn(move || click_loop(cfg, flag, clicks));
+        Worker { handle, stop }
+    }
+
+    // No Drop impl on purpose: joining blocks, so callers stop explicitly.
+    pub fn stop(self) {
+        self.stop.store(true, Ordering::Relaxed);
+        let _ = self.handle.join(); // returns within ~15 ms
+    }
 }
 
 fn next_delay(min: u32, max: u32, r: u64) -> u64 {
@@ -62,7 +83,7 @@ fn send_click() -> bool {
     unsafe { SendInput(2, inputs.as_ptr(), size_of::<INPUT>() as i32) == 2 }
 }
 
-pub fn worker(cfg: Config, stop: Arc<AtomicBool>, clicks: Arc<AtomicU64>) {
+fn click_loop(cfg: Config, stop: Arc<AtomicBool>, clicks: Arc<AtomicU64>) {
     let main = cfg.main as HWND;
     while sleep_until_or_stop(next_delay(cfg.min, cfg.max, rand_u64()), &stop) {
         unsafe {
